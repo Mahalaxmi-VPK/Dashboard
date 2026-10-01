@@ -1,0 +1,22 @@
+[
+    {
+        "username":"admin",
+        "lastLogin":"10:32 AM",
+        "riskScore":92,
+        "status":"Active"
+    },
+
+    {
+        "username":"john",
+        "lastLogin":"9:15 AM",
+        "riskScore":35,
+        "status":"Active"
+    },
+
+    {
+        "username":"guest",
+        "lastLogin":"Yesterday",
+        "riskScore":74,
+        "status":"Inactive"
+    }
+]

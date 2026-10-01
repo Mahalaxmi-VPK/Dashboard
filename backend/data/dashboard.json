@@ -1,0 +1,60 @@
+{
+  "activeUsers": 18,
+  "activeConnections": 52,
+  "failedLogins": 9,
+  "criticalAlerts": 3,
+
+  "health": {
+    "cpu": 10,
+    "memory": 61,
+    "storage": 78,
+    "connections": 35
+  },
+
+  "riskDistribution": [
+    { "name": "Safe", "value": 55 },
+    { "name": "Low", "value": 20 },
+    { "name": "Medium", "value": 25 },
+    { "name": "Critical", "value": 10 }
+  ],
+
+  "loginTrend": [
+    { "day": "Mon", "logins": 2 },
+    { "day": "Tue", "logins": 4 },
+    { "day": "Wed", "logins": 3 },
+    { "day": "Thu", "logins": 8 },
+    { "day": "Fri", "logins": 6 },
+    { "day": "Sat", "logins": 4 },
+    { "day": "Sun", "logins": 5 }
+  ],
+
+  "queryActivity": [
+    { "query": "SELECT", "count": 220 },
+    { "query": "INSERT", "count": 80 },
+    { "query": "UPDATE", "count": 65 },
+    { "query": "DELETE", "count": 20 }
+  ],
+
+  "liveActivity": [
+    {
+      "time": "10:42",
+      "action": "Admin Logged In"
+    },
+    {
+      "time": "10:45",
+      "action": "DROP TABLE detected"
+    },
+    {
+      "time": "10:47",
+      "action": "Database Backup"
+    },
+    {
+      "time": "10:50",
+      "action": "Failed Login"
+    },
+    {
+        "time":"12.00",
+        "action":"Selected 1000 rows"
+    }
+  ]
+}

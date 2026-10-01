@@ -1,0 +1,22 @@
+[
+    {
+        "time":"10:22",
+        "user":"admin",
+        "operation":"DELETE",
+        "status":"Success"
+    },
+
+    {
+        "time":"10:25",
+        "user":"guest",
+        "operation":"LOGIN",
+        "status":"Failed"
+    },
+
+    {
+        "time":"10:28",
+        "user":"john",
+        "operation":"SELECT",
+        "status":"Allowed"
+    }
+]

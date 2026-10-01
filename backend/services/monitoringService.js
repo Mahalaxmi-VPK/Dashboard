@@ -1,0 +1,632 @@
+const db = require("../db");
+const alertService = require("./alertService");
+
+
+/*
+===========================================================
+ DATABASE MONITORING SERVICE
+===========================================================
+
+ This service collects live information from MySQL and
+ prepares the data that is displayed on the Dashboard.
+
+ Data collected:
+    - Active users
+    - Active connections
+    - Failed logins
+    - Database health
+    - Query activity
+    - Live database activity
+    - Security alerts
+    - Risk distribution
+===========================================================
+*/
+
+
+async function getDashboardData() {
+
+    try {
+
+        /*
+        ===================================================
+        1. DATABASE STATUS
+        ===================================================
+        */
+
+        const [statusRows] = await db.query(`
+            SHOW GLOBAL STATUS
+        `);
+
+
+        const status = {};
+
+        statusRows.forEach(row => {
+
+            status[row.Variable_name] = Number(row.Value) || 0;
+
+        });
+
+
+        /*
+        ===================================================
+        2. ACTIVE CONNECTIONS
+        ===================================================
+        */
+
+        const [processRows] = await db.query(`
+            SHOW PROCESSLIST
+        `);
+
+
+        const activeConnections = processRows.length;
+
+
+        /*
+        ===================================================
+        3. ACTIVE USERS
+        ===================================================
+        */
+
+        const users = new Set();
+
+        processRows.forEach(process => {
+
+            if (process.User) {
+                users.add(process.User);
+            }
+
+        });
+
+
+        const activeUsers = users.size;
+
+
+        /*
+        ===================================================
+        4. DATABASE STORAGE
+        ===================================================
+
+        Calculates the size of the selected database.
+        */
+
+        let storage = 0;
+
+        try {
+
+            const [storageRows] = await db.query(`
+                SELECT
+                    ROUND(
+                        SUM(data_length + index_length) / 1024 / 1024,
+                        2
+                    ) AS size_mb
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE()
+            `);
+
+
+            storage = Number(
+                storageRows[0]?.size_mb || 0
+            );
+
+        } catch (storageError) {
+
+            console.error(
+                "Storage calculation error:",
+                storageError.message
+            );
+
+        }
+
+
+        /*
+        ===================================================
+        5. DATABASE HEALTH
+        ===================================================
+
+        IMPORTANT:
+        These are MySQL/database metrics.
+
+        Threads_running is NOT CPU usage.
+        Threads_connected is NOT memory usage.
+
+        Therefore we expose them using their correct
+        names internally.
+        */
+
+        const runningThreads =
+            Number(status.Threads_running || 0);
+
+        const connectedThreads =
+            Number(status.Threads_connected || 0);
+
+
+        const health = {
+
+            runningThreads,
+
+            connectedThreads,
+
+            storage,
+
+            connections: activeConnections
+
+        };
+
+
+        /*
+        ===================================================
+        6. QUERY ACTIVITY
+        ===================================================
+
+        Reads recent queries from mysql.general_log.
+        */
+
+        let queryActivity = {
+
+            SELECT: 0,
+
+            INSERT: 0,
+
+            UPDATE: 0,
+
+            DELETE: 0,
+
+            CREATE: 0,
+
+            ALTER: 0,
+
+            DROP: 0,
+
+            TRUNCATE: 0,
+
+            GRANT: 0,
+
+            REVOKE: 0
+
+        };
+
+
+        let liveActivity = [];
+
+
+        try {
+
+            const [logRows] = await db.query(`
+                SELECT
+                    event_time,
+                    user_host,
+                    command_type,
+                    CAST(argument AS CHAR(2000)) AS argument
+                FROM mysql.general_log
+                WHERE command_type = 'Query'
+                ORDER BY event_time DESC
+                LIMIT 1000
+            `);
+
+
+            /*
+            ===============================================
+            PROCESS QUERY LOG
+            ===============================================
+            */
+
+            logRows.forEach(row => {
+
+                const query = (row.argument || "")
+                    .trim()
+                    .replace(/\s+/g, " ");
+
+
+                const upperQuery =
+                    query.toUpperCase();
+
+
+                /*
+                Ignore queries generated by DB Guardian
+                itself.
+                */
+
+                if (
+
+                    upperQuery.includes(
+                        "MYSQL.GENERAL_LOG"
+                    ) ||
+
+                    upperQuery.includes(
+                        "SHOW PROCESSLIST"
+                    ) ||
+
+                    upperQuery.includes(
+                        "SHOW GLOBAL STATUS"
+                    ) ||
+
+                    upperQuery.includes(
+                        "INFORMATION_SCHEMA"
+                    ) ||
+
+                    upperQuery.includes(
+                        "PERFORMANCE_SCHEMA"
+                    )
+
+                ) {
+
+                    return;
+
+                }
+
+
+                /*
+                ===========================================
+                DETERMINE QUERY TYPE
+                ===========================================
+                */
+
+                let action = null;
+
+
+                if (
+                    upperQuery.startsWith("SELECT")
+                ) {
+
+                    action = "SELECT";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("INSERT")
+                ) {
+
+                    action = "INSERT";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("UPDATE")
+                ) {
+
+                    action = "UPDATE";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("DELETE")
+                ) {
+
+                    action = "DELETE";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("CREATE")
+                ) {
+
+                    action = "CREATE";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("ALTER")
+                ) {
+
+                    action = "ALTER";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("DROP")
+                ) {
+
+                    action = "DROP";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("TRUNCATE")
+                ) {
+
+                    action = "TRUNCATE";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("GRANT")
+                ) {
+
+                    action = "GRANT";
+
+                }
+
+                else if (
+                    upperQuery.startsWith("REVOKE")
+                ) {
+
+                    action = "REVOKE";
+
+                }
+
+
+                /*
+                ===========================================
+                COUNT QUERY TYPE
+                ===========================================
+                */
+
+                if (action && queryActivity[action] !== undefined) {
+
+                    queryActivity[action]++;
+
+                }
+
+
+                /*
+                ===========================================
+                ADD TO LIVE ACTIVITY
+                ===========================================
+                */
+
+                if (action) {
+
+                    liveActivity.push({
+
+                        time: row.event_time,
+
+                        user: row.user_host || "Unknown",
+
+                        action,
+
+                        query
+
+                    });
+
+                }
+
+            });
+
+
+        } catch (logError) {
+
+            console.error(
+                "General log error:",
+                logError.message
+            );
+
+        }
+
+
+        /*
+        ===================================================
+        7. LIMIT LIVE ACTIVITY
+        ===================================================
+        */
+
+        liveActivity =
+            liveActivity.slice(0, 20);
+
+
+        /*
+        ===================================================
+        8. SECURITY ALERTS
+        ===================================================
+
+        IMPORTANT:
+
+        We DO NOT create alerts separately here.
+
+        alertService.js is the single source of truth
+        for alert detection.
+
+        This prevents the Dashboard and Alerts page from
+        generating different alerts.
+        */
+
+        let alerts = [];
+
+
+        try {
+
+            alerts =
+                await alertService.getAlerts();
+
+        } catch (alertError) {
+
+            console.error(
+                "Alert service error:",
+                alertError.message
+            );
+
+        }
+
+
+        /*
+        ===================================================
+        9. CRITICAL ALERT COUNT
+        ===================================================
+        */
+
+        const criticalAlerts =
+            alerts.filter(
+                alert =>
+                    alert.severity === "Critical"
+            ).length;
+
+
+        /*
+        ===================================================
+        10. RISK DISTRIBUTION
+        ===================================================
+
+        Instead of "Running vs Sleeping", this now
+        represents actual security risk.
+        */
+
+        const riskDistribution = [
+
+            {
+                name: "Critical",
+
+                value:
+                    alerts.filter(
+                        alert =>
+                            alert.severity === "Critical"
+                    ).length
+            },
+
+            {
+                name: "High",
+
+                value:
+                    alerts.filter(
+                        alert =>
+                            alert.severity === "High"
+                    ).length
+            },
+
+            {
+                name: "Medium",
+
+                value:
+                    alerts.filter(
+                        alert =>
+                            alert.severity === "Medium"
+                    ).length
+            },
+
+            {
+                name: "Low",
+
+                value: queryActivity.SELECT
+            }
+
+        ];
+
+
+        /*
+        ===================================================
+        11. FAILED LOGINS
+        ===================================================
+
+        MySQL general_log does not reliably expose failed
+        authentication attempts in the same way as normal
+        Query commands.
+
+        So for now we keep this as zero rather than
+        pretending that Threads_running is failed logins.
+
+        We will implement proper failed-login tracking
+        separately.
+        */
+
+        const failedLogins = 0;
+
+
+        /*
+        ===================================================
+        12. LOGIN TREND
+        ===================================================
+
+        For now we expose connection-related metrics.
+
+        This will later be replaced by actual historical
+        login data once we introduce an audit table.
+        */
+
+        const loginTrend = [
+
+            {
+                day: "Connections",
+
+                logins:
+                    Number(status.Connections || 0)
+            },
+
+            {
+                day: "Connected",
+
+                logins:
+                    Number(status.Threads_connected || 0)
+            },
+
+            {
+                day: "Running",
+
+                logins:
+                    Number(status.Threads_running || 0)
+            }
+
+        ];
+
+
+        /*
+        ===================================================
+        13. RETURN DASHBOARD DATA
+        ===================================================
+        */
+
+        return {
+
+            /*
+            Summary
+            */
+
+            activeUsers,
+
+            activeConnections,
+
+            failedLogins,
+
+            criticalAlerts,
+
+
+            /*
+            Security alerts
+            */
+
+            alerts,
+
+
+            /*
+            Database health
+            */
+
+            health,
+
+
+            /*
+            Charts
+            */
+
+            riskDistribution,
+
+            loginTrend,
+
+            queryActivity,
+
+
+            /*
+            Live activity
+            */
+
+            liveActivity
+
+        };
+
+
+    } catch (error) {
+
+        console.error(
+            "Monitoring Service Error:",
+            error
+        );
+
+        throw error;
+
+    }
+
+}
+
+
+module.exports = {
+
+    getDashboardData
+
+};
